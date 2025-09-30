@@ -1,0 +1,59 @@
+{% extends "gso_office/gso_base_dashboard.html" %}
+
+{% block title %}Add User{% endblock %}
+
+{% block main_content %}
+<div class="card p-4">
+  <h2>Add New User</h2>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn-success">Save</button>
+    <a href="{% url 'gso_accounts:account_management' %}" class="btn btn-secondary">Cancel</a>
+  </form>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  const roleField = document.getElementById("id_role");
+
+  const firstName = document.getElementById("id_first_name").closest("p");
+  const lastName = document.getElementById("id_last_name").closest("p");
+  const unitField = document.getElementById("id_unit").closest("p");
+  const deptField = document.getElementById("id_department").closest("p");
+  const passwordField = document.getElementById("id_password").closest("p");
+  const confirmPasswordField = document.getElementById("id_confirm_password").closest("p");
+
+  function toggleFields() {
+    if (roleField.value === "requestor") {
+      // Requestor: only department is visible, hide password fields
+      firstName.style.display = "none";
+      lastName.style.display = "none";
+      unitField.style.display = "none";
+      deptField.style.display = "block";
+      passwordField.style.display = "none";
+      confirmPasswordField.style.display = "none";
+    } else if (roleField.value === "gso") {
+      // GSO: needs first/last name and password, no unit, no dept
+      firstName.style.display = "block";
+      lastName.style.display = "block";
+      unitField.style.display = "none";
+      deptField.style.display = "none";
+      passwordField.style.display = "block";
+      confirmPasswordField.style.display = "block";
+    } else {
+      // Unit head / personnel: needs first/last name + unit + password
+      firstName.style.display = "block";
+      lastName.style.display = "block";
+      unitField.style.display = "block";
+      deptField.style.display = "none";
+      passwordField.style.display = "block";
+      confirmPasswordField.style.display = "block";
+    }
+  }
+
+  roleField.addEventListener("change", toggleFields);
+  toggleFields(); // run on page load
+});
+</script>
+{% endblock %}

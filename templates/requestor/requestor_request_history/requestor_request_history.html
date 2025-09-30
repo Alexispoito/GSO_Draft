@@ -1,0 +1,52 @@
+{% extends "requestor/requestor_base_dashboard.html" %}
+
+{% block title %}Request History{% endblock %}
+
+{% block main_content %}
+<main class="main-content">
+  <div class="request-container">
+    <!-- Header -->
+    <div class="request-header">
+      <h2 class="request-title">REQUEST HISTORY</h2>
+      <div class="header-actions">
+        <a href="{% url 'gso_accounts:role_redirect' %}" class="btn btn-sm btn-primary">
+          Refresh
+        </a>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="table-container">
+      <div class="table-header">
+        <div class="table-row">
+          <div>Job No.</div>
+          <div>Unit</div>
+          <div>Request Date</div>
+          <div>Status</div>
+        </div>
+      </div>
+
+      <div class="table-body">
+        {% if request_history %}
+          {% for req in request_history %}
+          <div class="table-row">
+            <div>{{ req.id }}</div>
+            <div>{{ req.get_unit_display }}</div>
+            <div>{{ req.created_at|date:"M d, Y" }}</div>
+            <div>
+              <span class="status {{ req.status|lower }}">
+                {{ req.status }}
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state">
+            <p>No Request History Found</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}

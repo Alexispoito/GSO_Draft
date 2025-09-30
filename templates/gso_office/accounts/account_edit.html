@@ -1,0 +1,60 @@
+{% extends "gso_office/gso_base_dashboard.html" %}
+
+{% block title %}Edit User{% endblock %}
+
+{% block main_content %}
+<div class="header">
+    <h1 class="page-title">EDIT USER – 
+        {% if user.role == "requestor" %}
+            {{ user.department }}
+        {% else %}
+            {{ user.get_full_name }}
+        {% endif %}
+    </h1>
+</div>
+
+<div class="form-container">
+    <form method="post" class="edit-user-form">
+        {% csrf_token %}
+        {{ form.as_p }}
+
+        <button type="submit" class="btn btn-success">Save Changes</button>
+        <a href="{% url 'gso_accounts:account_management' %}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const roleField = document.getElementById("id_role");
+
+    const firstName = document.getElementById("id_first_name")?.closest("p");
+    const lastName = document.getElementById("id_last_name")?.closest("p");
+    const unitField = document.getElementById("id_unit")?.closest("p");
+    const deptField = document.getElementById("id_department")?.closest("p");
+
+    function toggleFields() {
+        if (!roleField) return;
+
+        if (roleField.value === "requestor") {
+            firstName && (firstName.style.display = "none");
+            lastName && (lastName.style.display = "none");
+            unitField && (unitField.style.display = "none");
+            deptField && (deptField.style.display = "block");
+        } else if (roleField.value === "gso") {
+            firstName && (firstName.style.display = "block");
+            lastName && (lastName.style.display = "block");
+            unitField && (unitField.style.display = "none");
+            deptField && (deptField.style.display = "none");
+        } else {
+            firstName && (firstName.style.display = "block");
+            lastName && (lastName.style.display = "block");
+            unitField && (unitField.style.display = "block");
+            deptField && (deptField.style.display = "none");
+        }
+    }
+
+    roleField.addEventListener("change", toggleFields);
+    toggleFields();
+});
+</script>
+{% endblock %}
