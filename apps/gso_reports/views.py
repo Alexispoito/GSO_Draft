@@ -1,11 +1,19 @@
 # apps/gso_reports/views.py
+import os
+import json
+import calendar
+import openpyxl
+from datetime import datetime
+from django.conf import settings
+from django.http import HttpResponse
+
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse, JsonResponse
 
 from apps.gso_requests.models import ServiceRequest
 from apps.gso_accounts.models import User, Unit
-from .models import WorkAccomplishmentReport, SuccessIndicator, IPMT
+from .models import WorkAccomplishmentReport, SuccessIndicator, IPMT, ActivityName
 from .utils import normalize_report, generate_ipmt_excel, collect_ipmt_reports
 from apps.ai_service.utils import generate_war_description, generate_ipmt_summary
 
@@ -115,27 +123,150 @@ def accomplishment_report(request):
 @login_required
 @user_passes_test(is_gso_or_director)
 def generate_ipmt(request):
-    month_filter = request.GET.get("month")
-    unit_filter = request.GET.get("unit", "all")
-    personnel_names = request.GET.getlist("personnel")
+    import json
 
-    if not month_filter:
-        return HttpResponse("Month is required in 'YYYY-MM' format.", status=400)
+    reports = []
+    personnel_list = []
 
-    try:
-        wb = generate_ipmt_excel(month_filter, unit_name=unit_filter, personnel_names=personnel_names)
-    except ValueError as e:
-        return HttpResponse(str(e), status=400)
+    # --- Handle POST (from edited preview) ---
+    if request.method == "POST" and request.POST.get("rows"):
+        try:
+            reports = json.loads(request.POST.get("rows"))
+        except json.JSONDecodeError:
+            return HttpResponse("Invalid row data.", status=400)
 
-    filename = f"IPMT_{unit_filter}_{month_filter}.xlsx"
+        month_filter = request.POST.get("month")
+        unit_filter = request.POST.get("unit")
+        personnel_param = request.POST.get("personnel") or ""
+        personnel_list = [p.strip() for p in personnel_param.split(",") if p.strip()]
 
+        # Update indicator to include code + description from SuccessIndicator
+        for r in reports:
+            # Extract the code (handles "CF8" or "CF8 - desc")
+            code_only = r["indicator"].split(" - ")[0].strip()
+
+            # Fetch SuccessIndicator
+            si = SuccessIndicator.objects.filter(code__iexact=code_only).first()
+
+            # Use full "code - description" if exists
+            if si:
+                r["indicator"] = f"{si.code} - {si.description}"
+
+    # --- Handle GET fallback ---
+    else:
+        personnel_param = request.GET.get("personnel")
+        month_filter = request.GET.get("month")
+        unit_filter = request.GET.get("unit")
+
+        if not personnel_param or not month_filter or not unit_filter:
+            return HttpResponse("Personnel, unit, and month are required.", status=400)
+
+        year, month_num = map(int, month_filter.split("-"))
+        month_name = f"{calendar.month_name[month_num]} {year}"
+        personnel_list = [p.strip() for p in personnel_param.split(",")]
+
+        for username in personnel_list:
+            try:
+                user = User.objects.get(username=username)
+            except User.DoesNotExist:
+                continue
+
+            # --- Fetch saved IPMT rows first ---
+            ipmt_rows = IPMT.objects.filter(
+                personnel=user,
+                unit__name__iexact=unit_filter,
+                month=f"{calendar.month_name[month_num]} {year}"
+            )
+
+            if ipmt_rows.exists():
+                for row in ipmt_rows:
+                    reports.append({
+                        "indicator": f"{row.indicator.code} - {row.indicator.description}",
+                        "description": row.accomplishment or "",
+                        "remarks": row.remarks or "",
+                    })
+            else:
+                # --- Fallback: fetch WARs ---
+                wars = WorkAccomplishmentReport.objects.filter(
+                    assigned_personnel=user,
+                    unit__name__iexact=unit_filter,
+                    date_started__year=year,
+                    date_started__month=month_num
+                )
+
+                for war in wars:
+                    activity_obj = None
+                    if war.activity_name:
+                        activity_obj = ActivityName.objects.filter(name__iexact=war.activity_name).first()
+
+                    sis = SuccessIndicator.objects.filter(
+                        unit=war.unit,
+                        activity_name=activity_obj
+                    )
+
+                    if sis.exists():
+                        for si in sis:
+                            reports.append({
+                                "indicator": f"{si.code} - {si.description}",
+                                "description": war.description,
+                                "remarks": "Complied" if war.description else "",
+                            })
+                    else:
+                        reports.append({
+                            "indicator": war.activity_name or war.unit.name,
+                            "description": war.description,
+                            "remarks": "Complied" if war.description else "",
+                        })
+
+                # --- Fallback: fetch completed ServiceRequests ---
+                completed_requests = ServiceRequest.objects.filter(
+                    assigned_personnel=user,
+                    unit__name__iexact=unit_filter,
+                    status="Completed",
+                    created_at__year=year,
+                    created_at__month=month_num
+                )
+
+                for req in completed_requests:
+                    reports.append({
+                        "indicator": req.unit.name,
+                        "description": req.description,
+                        "remarks": "Complied" if req.description else "",
+                    })
+
+    # --- Load Excel template ---
+    template_path = os.path.join(settings.BASE_DIR, "static", "excel_file", "sampleipmt.xlsx")
+    wb = openpyxl.load_workbook(template_path)
+    ws = wb.active
+
+    # --- Header info for Excel ---
+    personnel_fullnames = []
+    for username in personnel_list:
+        user_obj = User.objects.filter(username=username).first()  # lookup by username
+        if user_obj:
+            # Use full_name if exists, else fallback to username
+            personnel_fullnames.append(user_obj.get_full_name() or user_obj.username)
+        else:
+            personnel_fullnames.append(username)  # fallback if user not found
+
+    ws["B8"] = ", ".join(personnel_fullnames)
+    ws["B11"] = month_filter if request.method == "POST" else month_name
+
+    # Write reports starting row 13
+    start_row = 13
+    for i, r in enumerate(reports, start=start_row):
+        ws.cell(row=i, column=1).value = r.get("indicator")
+        ws.cell(row=i, column=2).value = r.get("description")
+        ws.cell(row=i, column=3).value = r.get("remarks")
+
+    # Return Excel file
     response = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    filename = f"IPMT_{unit_filter}_{month_filter}.xlsx"
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     wb.save(response)
     return response
-
 
 # -------------------------------
 # Get WAR Description (AJAX)
@@ -148,14 +279,16 @@ def get_war_description(request, war_id):
         return JsonResponse({'description': war.description or ""})
     except WorkAccomplishmentReport.DoesNotExist:
         return JsonResponse({'error': 'WAR not found'}, status=404)
-
-
 # -------------------------------
 # Preview IPMT (Web)
 # -------------------------------
 @login_required
 @user_passes_test(is_gso_or_director)
 def preview_ipmt(request):
+    """
+    Preview IPMT rows for the selected unit, personnel, and month.
+    Fetches WorkAccomplishmentReports matching each SuccessIndicator's activity_name.
+    """
     month_filter = request.GET.get("month")
     unit_filter = request.GET.get("unit", "all")
     personnel_names = request.GET.getlist("personnel[]") or []
@@ -168,35 +301,49 @@ def preview_ipmt(request):
     except ValueError:
         return HttpResponse("Invalid month format. Use YYYY-MM.", status=400)
 
-    # Get selected unit object
-    unit = None
-    if unit_filter.lower() != "all":
-        unit = Unit.objects.filter(name__iexact=unit_filter).first()
+    from apps.gso_accounts.models import User, Unit
+    from .models import SuccessIndicator, WorkAccomplishmentReport
 
-    # Fetch all indicators for this unit (or all units)
-    indicators = SuccessIndicator.objects.filter(unit=unit) if unit else SuccessIndicator.objects.all()
+    unit = Unit.objects.filter(name__iexact=unit_filter).first()
+    if not unit:
+        return HttpResponse("Unit not found.", status=404)
 
     reports = []
-    for indicator in indicators:
-        # For each indicator, fetch WARs for selected personnel & month
-        wars = WorkAccomplishmentReport.objects.filter(
-            unit=unit,
-            activity_name=indicator.activity_name,
-            date_started__year=year,
-            date_started__month=month_num,
-        )
-        if personnel_names:
-            wars = wars.filter(assigned_personnel__first_name__in=[p.split()[0] for p in personnel_names])
 
-        description = " / ".join([w.description for w in wars if w.description]) or ""
-        remarks = ""  # can generate default remarks if needed
+    for person_name in personnel_names:
+        # Lookup by full name (adjust as needed)
+        user = User.objects.filter(username=person_name).first()
+        if not user:
+            continue
 
-        reports.append({
-            "indicator": indicator.code,
-            "description": description,
-            "remarks": remarks,
-            "war_ids": [w.id for w in wars],
-        })
+        # Get all active success indicators for this unit
+        indicators = SuccessIndicator.objects.filter(unit=unit, is_active=True)
+
+        for indicator in indicators:
+            # Determine which activity_name to match against WARs
+            activity_name_to_match = (
+                indicator.activity_name.name if indicator.activity_name else indicator.code
+            )
+
+            # Fetch related WARs for this user and activity_name
+            wars = WorkAccomplishmentReport.objects.filter(
+                unit=unit,
+                assigned_personnel=user,
+                activity_name=activity_name_to_match
+            )
+
+            # Combine descriptions from all relevant WARs
+            description = " ".join([w.description for w in wars if w.description]) or ""
+
+            # Collect WAR IDs to keep track
+            war_ids = [w.id for w in wars]
+
+            reports.append({
+                "indicator": indicator.code,
+                "description": description,
+                "remarks": "COMPLIED" if description else "",
+                "war_ids": war_ids,
+            })
 
     context = {
         "reports": reports,
@@ -206,17 +353,13 @@ def preview_ipmt(request):
     }
 
     return render(request, "gso_office/ipmt/ipmt_preview.html", context)
+
 # -------------------------------
-# Save IPMT (after editing in preview)
+# Save IPMT
 # -------------------------------
 @login_required
 @user_passes_test(is_gso_or_director)
 def save_ipmt(request):
-    import json
-    from apps.gso_accounts.models import User, Unit
-    from .models import IPMT, SuccessIndicator, WorkAccomplishmentReport
-    from apps.ai_service.utils import generate_ipmt_summary
-
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=400)
 
@@ -229,51 +372,54 @@ def save_ipmt(request):
     except Exception as e:
         return JsonResponse({"error": f"Invalid JSON: {str(e)}"}, status=400)
 
-    if not month or not unit_name:
-        return JsonResponse({"error": "Month and unit are required"}, status=400)
-
     unit = Unit.objects.filter(name__iexact=unit_name).first()
     if not unit:
         return JsonResponse({"error": "Unit not found"}, status=404)
 
     for person_name in personnel_names:
-        user = User.objects.filter(username__iexact=person_name).first()
+        user = User.objects.filter(username=person_name).first()
         if not user:
             continue
 
         for row in rows:
-            indicator_code = row.get("indicator")
-            if not indicator_code:
-                continue
+            indicator = SuccessIndicator.objects.filter(unit=unit, code=row.get("indicator")).first()
+            if not indicator:
+                # Optionally create indicator if missing
+                indicator = SuccessIndicator.objects.create(
+                    unit=unit,
+                    code=row.get("indicator"),
+                    name=row.get("indicator"),
+                    is_active=True
+                )
 
-            indicator, _ = SuccessIndicator.objects.get_or_create(
-                unit=unit,
-                code=indicator_code,
-                defaults={"name": indicator_code, "is_active": True}
-            )
-
+            # Fetch WARs for this indicator
             war_ids = row.get("war_ids", [])
-            wars = WorkAccomplishmentReport.objects.filter(assigned_personnel=user)
+            wars = WorkAccomplishmentReport.objects.filter(
+                assigned_personnel=user,
+                unit=unit,
+                activity_name=indicator.code
+            )
             if war_ids:
                 wars = wars.filter(id__in=war_ids)
-            wars = wars.filter(activity_name=indicator.code)
 
+            # Determine accomplishment
             accomplishment = row.get("description", "").strip()
-            if not accomplishment and wars.exists():
-                war_descriptions = [w.description for w in wars if w.description]
-                if war_descriptions:
-                    accomplishment = generate_ipmt_summary(indicator.name, war_descriptions)
-
             remarks = row.get("remarks", "").strip() or accomplishment
 
-            ipmt_obj, _ = IPMT.objects.update_or_create(
+            # Save or update IPMT
+            ipmt_obj, created = IPMT.objects.update_or_create(
                 personnel=user,
                 unit=unit,
                 month=month,
                 indicator=indicator,
-                defaults={"accomplishment": accomplishment, "remarks": remarks}
+                defaults={
+                    "accomplishment": accomplishment,
+                    "remarks": remarks
+                }
             )
+            # Link WARs
             ipmt_obj.reports.set(wars)
 
     return JsonResponse({"status": "success"})
+
 

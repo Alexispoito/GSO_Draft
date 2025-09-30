@@ -5,8 +5,8 @@
 <div class="header d-flex align-items-center justify-content-between mb-3">
     <h1 class="page-title">IPMT Preview - {{ month_filter }}</h1>
     <div class="btn-group">
-        <button id="edit-btn" class="btn btn-warning">Edit</button>
-        <button id="accept-btn" class="btn btn-success">Accept / Export</button>
+        <button id="edit-btn" class="btn btn-warning" {% if reports|length == 0 %}disabled{% endif %}>Edit</button>
+        <button id="accept-btn" class="btn btn-success" {% if reports|length == 0 %}disabled{% endif %}>Accept / Export</button>
         <button id="save-btn" class="btn btn-primary d-none">Save</button>
         <button id="cancel-btn" class="btn btn-secondary d-none">Cancel</button>
     </div>
@@ -19,22 +19,32 @@
                 <th>Success Indicators</th>
                 <th>Actual Accomplishments</th>
                 <th>Remarks</th>
+                <th class="action-col d-none">Action</th> <!-- hide by default -->
             </tr>
         </thead>
         <tbody>
-            {% for row in reports %}
-            <tr data-row-id="{{ forloop.counter0 }}" data-war-ids="{{ row.war_ids|join:',' }}">
-                <td>{{ row.indicator }}</td>
-                <td>
-                    <span class="desc-text">{{ row.description|default:"" }}</span>
-                    <input class="desc-input form-control d-none" type="text" value="{{ row.description|default:"" }}">
-                </td>
-                <td>
-                    <span class="remarks-text">{{ row.remarks|default:"" }}</span>
-                    <input class="remarks-input form-control d-none" type="text" value="{{ row.remarks|default:"" }}">
-                </td>
-            </tr>
-            {% endfor %}
+            {% if reports %}
+                {% for row in reports %}
+                <tr data-row-id="{{ forloop.counter0 }}" data-war-ids="{{ row.war_ids|join:',' }}">
+                    <td>{{ row.indicator }}</td>
+                    <td>
+                        <span class="desc-text">{{ row.description|default:"" }}</span>
+                        <input class="desc-input form-control d-none" type="text" value="{{ row.description|default:"" }}">
+                    </td>
+                    <td>
+                        <span class="remarks-text">{{ row.remarks|default:"" }}</span>
+                        <input class="remarks-input form-control d-none" type="text" value="{{ row.remarks|default:"" }}">
+                    </td>
+                    <td class="action-col">
+                        <button class="delete-btn btn btn-danger btn-sm d-none">Delete</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="4" class="text-center">No reports available yet.</td>
+                </tr>
+            {% endif %}
         </tbody>
     </table>
 </div>
@@ -45,9 +55,8 @@ document.addEventListener("DOMContentLoaded", function() {
     const acceptBtn = document.getElementById("accept-btn");
     const saveBtn = document.getElementById("save-btn");
     const cancelBtn = document.getElementById("cancel-btn");
-
     const table = document.getElementById("ipmt-table");
-    const rows = table.querySelectorAll("tbody tr");
+    let rows = table.querySelectorAll("tbody tr");
 
     let editMode = false;
     let originalData = [];
@@ -61,13 +70,22 @@ document.addEventListener("DOMContentLoaded", function() {
             const remarksInput = row.querySelector(".remarks-input");
             const descText = row.querySelector(".desc-text");
             const remarksText = row.querySelector(".remarks-text");
+            const deleteBtn = row.querySelector(".delete-btn");
 
-            originalData.push({desc: descInput.value, remarks: remarksInput.value});
+            if (!descInput) return;  // skip placeholder row
+
+            originalData.push({
+                desc: descInput.value,
+                remarks: remarksInput.value
+            });
 
             descText.classList.add("d-none");
             remarksText.classList.add("d-none");
             descInput.classList.remove("d-none");
             remarksInput.classList.remove("d-none");
+
+            if (deleteBtn) deleteBtn.classList.remove("d-none");
+            if (deleteBtn) deleteBtn.addEventListener("click", () => row.remove());
         });
 
         editBtn.classList.add("d-none");
@@ -78,11 +96,15 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function exitEditMode() {
         editMode = false;
+        rows = table.querySelectorAll("tbody tr"); // refresh after deletions
         rows.forEach((row, index) => {
             const descInput = row.querySelector(".desc-input");
             const remarksInput = row.querySelector(".remarks-input");
             const descText = row.querySelector(".desc-text");
             const remarksText = row.querySelector(".remarks-text");
+            const deleteBtn = row.querySelector(".delete-btn");
+
+            if (!descInput) return;
 
             descText.textContent = descInput.value;
             remarksText.textContent = remarksInput.value;
@@ -91,6 +113,7 @@ document.addEventListener("DOMContentLoaded", function() {
             remarksText.classList.remove("d-none");
             descInput.classList.add("d-none");
             remarksInput.classList.add("d-none");
+            if (deleteBtn) deleteBtn.classList.add("d-none");
         });
 
         editBtn.classList.remove("d-none");
@@ -99,22 +122,25 @@ document.addEventListener("DOMContentLoaded", function() {
         cancelBtn.classList.add("d-none");
     }
 
-    editBtn.addEventListener("click", enterEditMode);
-    cancelBtn.addEventListener("click", function() {
+    editBtn?.addEventListener("click", enterEditMode);
+
+    cancelBtn?.addEventListener("click", function() {
         rows.forEach((row, index) => {
             const descInput = row.querySelector(".desc-input");
             const remarksInput = row.querySelector(".remarks-input");
+            if (!descInput) return;
             descInput.value = originalData[index].desc;
             remarksInput.value = originalData[index].remarks;
         });
         exitEditMode();
     });
 
-    saveBtn.addEventListener("click", async function() {
+    saveBtn?.addEventListener("click", async function() {
         const payload = [];
         rows.forEach(row => {
             const descInput = row.querySelector(".desc-input");
             const remarksInput = row.querySelector(".remarks-input");
+            if (!descInput) return;
             payload.push({
                 indicator: row.children[0].textContent.trim(),
                 description: descInput.value.trim(),
@@ -125,7 +151,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
         const response = await fetch("{% url 'gso_reports:save_ipmt' %}", {
             method: "POST",
-            headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": "{{ csrf_token }}"
+            },
             body: JSON.stringify({
                 month: "{{ month_filter }}",
                 unit: "{{ unit_filter }}",
@@ -142,10 +171,52 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
-    acceptBtn.addEventListener("click", function() {
-        const urlParams = new URLSearchParams({month: "{{ month_filter }}", unit: "{{ unit_filter }}"});
-        window.location.href = "{% url 'gso_reports:generate_ipmt' %}?" + urlParams.toString();
+    acceptBtn?.addEventListener("click", function() {
+        const payload = [];
+        rows.forEach(row => {
+            const descInput = row.querySelector(".desc-input");
+            const remarksInput = row.querySelector(".remarks-input");
+            if (!descInput) return; // skip placeholder row
+            payload.push({
+                indicator: row.children[0].textContent.trim(),
+                description: descInput.value.trim(),
+                remarks: remarksInput.value.trim(),
+                war_ids: row.dataset.warIds.split(",").filter(Boolean).map(Number)
+            });
+        });
+
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = "{% url 'gso_reports:generate_ipmt' %}";
+
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "rows";
+        input.value = JSON.stringify(payload);
+        form.appendChild(input);
+
+        const monthInput = document.createElement("input");
+        monthInput.type = "hidden";
+        monthInput.name = "month";
+        monthInput.value = "{{ month_filter }}";
+        form.appendChild(monthInput);
+
+        const unitInput = document.createElement("input");
+        unitInput.type = "hidden";
+        unitInput.name = "unit";
+        unitInput.value = "{{ unit_filter }}";
+        form.appendChild(unitInput);
+
+        const csrfInput = document.createElement("input");
+        csrfInput.type = "hidden";
+        csrfInput.name = "csrfmiddlewaretoken";
+        csrfInput.value = "{{ csrf_token }}";
+        form.appendChild(csrfInput);
+
+        document.body.appendChild(form);
+        form.submit();
     });
+
 });
 </script>
 {% endblock %}
