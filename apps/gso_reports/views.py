@@ -7,7 +7,7 @@ from apps.gso_requests.models import ServiceRequest
 from apps.gso_accounts.models import User, Unit
 from .models import WorkAccomplishmentReport, SuccessIndicator, IPMT
 from .utils import normalize_report, generate_ipmt_excel, collect_ipmt_reports
-from apps.ai_service.utils import generate_war_description
+from apps.ai_service.utils import generate_war_description, generate_ipmt_summary
 
 
 # -------------------------------
@@ -215,68 +215,65 @@ def save_ipmt(request):
     import json
     from apps.gso_accounts.models import User, Unit
     from .models import IPMT, SuccessIndicator, WorkAccomplishmentReport
-    from .utils import generate_ipmt_summary
+    from apps.ai_service.utils import generate_ipmt_summary
 
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=400)
 
     try:
         data = json.loads(request.body)
-    except Exception:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        month = data.get("month")
+        unit_name = data.get("unit")
+        personnel_names = data.get("personnel", [])
+        rows = data.get("rows", [])
+    except Exception as e:
+        return JsonResponse({"error": f"Invalid JSON: {str(e)}"}, status=400)
 
-    month = data.get("month")
-    unit_name = data.get("unit")
-    personnel_names = data.get("personnel", [])
-    rows = data.get("rows", [])
-
-    if not month or not unit_name or not personnel_names or not rows:
-        return JsonResponse({"error": "Missing required data"}, status=400)
+    if not month or not unit_name:
+        return JsonResponse({"error": "Month and unit are required"}, status=400)
 
     unit = Unit.objects.filter(name__iexact=unit_name).first()
     if not unit:
-        return JsonResponse({"error": f"Unit '{unit_name}' not found"}, status=404)
+        return JsonResponse({"error": "Unit not found"}, status=404)
 
     for person_name in personnel_names:
-        user = (
-            User.objects.filter(first_name__iexact=person_name.split()[0]).first()
-            or User.objects.filter(username__iexact=person_name).first()
-        )
+        user = User.objects.filter(username__iexact=person_name).first()
         if not user:
             continue
 
         for row in rows:
-            indicator = SuccessIndicator.objects.filter(unit=unit, code=row["indicator"]).first()
-            if not indicator:
+            indicator_code = row.get("indicator")
+            if not indicator_code:
                 continue
 
-            # Use correct activity_name mapping
-            war_ids = row.get("war_ids", [])
-            wars = WorkAccomplishmentReport.objects.filter(
-                id__in=war_ids,
-                assigned_personnel=user,
-                activity_name=indicator.activity_name
+            indicator, _ = SuccessIndicator.objects.get_or_create(
+                unit=unit,
+                code=indicator_code,
+                defaults={"name": indicator_code, "is_active": True}
             )
 
-            accomplishment = row.get("description") or row.get("accomplishment") or ""
+            war_ids = row.get("war_ids", [])
+            wars = WorkAccomplishmentReport.objects.filter(assigned_personnel=user)
+            if war_ids:
+                wars = wars.filter(id__in=war_ids)
+            wars = wars.filter(activity_name=indicator.code)
+
+            accomplishment = row.get("description", "").strip()
             if not accomplishment and wars.exists():
                 war_descriptions = [w.description for w in wars if w.description]
                 if war_descriptions:
-                    accomplishment = generate_ipmt_summary(indicator.code, war_descriptions)
+                    accomplishment = generate_ipmt_summary(indicator.name, war_descriptions)
 
-            remarks = row.get("remarks") or accomplishment
+            remarks = row.get("remarks", "").strip() or accomplishment
 
-            ipmt_obj, created = IPMT.objects.update_or_create(
+            ipmt_obj, _ = IPMT.objects.update_or_create(
                 personnel=user,
                 unit=unit,
                 month=month,
                 indicator=indicator,
-                defaults={
-                    "accomplishment": accomplishment,
-                    "remarks": remarks,
-                }
+                defaults={"accomplishment": accomplishment, "remarks": remarks}
             )
-
             ipmt_obj.reports.set(wars)
 
     return JsonResponse({"status": "success"})
+
