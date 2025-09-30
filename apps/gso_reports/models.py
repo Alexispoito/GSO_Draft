@@ -29,19 +29,28 @@ class ActivityName(models.Model):
 class SuccessIndicator(models.Model):
     """
     Success indicators per unit (IPMT basis).
+    Each SI is linked to an ActivityName to correctly pull WAR descriptions.
     """
     unit = models.ForeignKey(Unit, on_delete=models.CASCADE)
     code = models.CharField(max_length=20)  # e.g., CF1, SF2
     description = models.TextField()
+    activity_name = models.ForeignKey(
+        "ActivityName",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Select the Activity Name that maps to this Success Indicator"
+    )
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.code} - {self.unit.name}"
-
+    
 
 class WorkAccomplishmentReport(models.Model):
     """
     Represents a Work Accomplishment Report (WAR), either migrated or live from ServiceRequest.
+    Focused on activity-based tracking for IPMT.
     """
     request = models.OneToOneField(
         ServiceRequest,
@@ -57,7 +66,7 @@ class WorkAccomplishmentReport(models.Model):
     date_started = models.DateField()
     date_completed = models.DateField(null=True, blank=True)
 
-    project_name = models.CharField(max_length=255, blank=True, null=True)
+    activity_name = models.CharField(max_length=255, blank=True, null=True)  # <-- changed from project_name
     description = models.TextField(blank=True)
 
     status = models.CharField(
@@ -79,35 +88,33 @@ class WorkAccomplishmentReport(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def generate_description(self):
+        """
+        Returns the WAR description, or fallback text if missing.
+        """
         if self.description:
             return self.description
         if self.request:
             return f"WAR generated from request {self.request.id}: {self.request.description}"
-        return f"WAR for project {self.project_name or 'N/A'}"
+        return f"WAR for activity {self.activity_name or 'N/A'}"
 
     def save(self, *args, **kwargs):
         self.total_cost = (self.material_cost or 0) + (self.labor_cost or 0)
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"WAR - {self.project_name or 'No Project'} ({self.unit.name})"
+        return f"WAR - {self.activity_name or 'No Activity'} ({self.unit.name})"
 
-
-class IPMTDraft(models.Model):
+class IPMT(models.Model):
     """
-    Temporary or finalized IPMT report, tied to personnel and success indicators.
+    Stores IPMT rows for each personnel/unit/month.
+    Each row corresponds to a success indicator with accomplishment and remarks.
     """
     personnel = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     unit = models.ForeignKey(Unit, on_delete=models.CASCADE)
     month = models.CharField(max_length=20)  # e.g., "September 2025"
     indicator = models.ForeignKey(SuccessIndicator, on_delete=models.CASCADE)
     accomplishment = models.TextField(blank=True, null=True)  # AI/manual fill
-    remarks = models.TextField(blank=True, null=True)
-    status = models.CharField(
-        max_length=20,
-        choices=[("draft", "Draft"), ("final", "Finalized")],
-        default="draft"
-    )
+    remarks = models.TextField(blank=True, null=True)          # auto-compiled or manual edit
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

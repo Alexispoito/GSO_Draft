@@ -1,11 +1,10 @@
-# apps/ai_service/views.py
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 
 from .models import AIReportSummary
-from apps.gso_reports.models import WorkAccomplishmentReport, IPMTDraft
-from .tasks import generate_war_description_task, generate_ipmt_summary_task
+from apps.gso_reports.models import WorkAccomplishmentReport
+from .tasks import generate_war_description, generate_ipmt_summary
 
 
 @login_required
@@ -35,7 +34,7 @@ def generate_ai_summary(request, report_id):
     report = get_object_or_404(WorkAccomplishmentReport, id=report_id)
 
     if request.method == "POST":
-        generate_war_description_task.delay(report.id)  # async task
+        generate_war_description.delay(report.id)  # async task
         messages.success(request, f"AI summary generation started for WAR #{report.id}.")
         return redirect("ai_service:ai_summary_detail", report_id=report.id)
 
@@ -43,15 +42,30 @@ def generate_ai_summary(request, report_id):
 
 
 @login_required
-def generate_ipmt_ai_summary(request, ipmt_id):
+def generate_ipmt_ai_summary(request, unit_name, month_filter):
     """
-    Trigger Celery task to generate AI summary for an IPMT draft.
+    Trigger Celery task to generate AI summary for IPMT.
+    Now works directly on IPMT rows rather than drafts.
     """
-    ipmt = get_object_or_404(IPMTDraft, id=ipmt_id)
+    from apps.gso_reports.utils import collect_ipmt_reports
+
+    try:
+        year, month_num = map(int, month_filter.split("-"))
+    except ValueError:
+        messages.error(request, "Invalid month format. Use YYYY-MM.")
+        return redirect("gso_reports:preview_ipmt")
+
+    reports = collect_ipmt_reports(year, month_num, unit_name)
 
     if request.method == "POST":
-        generate_ipmt_summary_task.delay(ipmt.id)  # async task
-        messages.success(request, f"AI summary generation started for IPMT draft #{ipmt.id}.")
-        return redirect("gso_reports:ipmt_detail", ipmt_id=ipmt.id)
+        # Assuming generate_ipmt_summary can accept multiple rows
+        report_ids = [r["war_id"] for r in reports if r["war_id"]]
+        generate_ipmt_summary.delay(report_ids)
+        messages.success(request, f"AI summary generation started for IPMT {unit_name} {month_filter}.")
+        return redirect("gso_reports:preview_ipmt")
 
-    return render(request, "ai_service/generate_ipmt_summary.html", {"ipmt": ipmt})
+    return render(request, "ai_service/generate_ipmt_summary.html", {
+        "unit_name": unit_name,
+        "month_filter": month_filter,
+        "reports": reports,
+    })

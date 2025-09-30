@@ -28,12 +28,10 @@
     <div class="modal-content">
       <form method="get" action="{% url 'gso_reports:preview_ipmt' %}">
         <div class="modal-header">
-          <h5 class="modal-title" id="ipmtModalLabel">Generate IPMT Report</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          <h5 class="modal-title">Generate IPMT Report</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
-
         <div class="modal-body">
-          <!-- Unit Selection -->
           <div class="mb-3">
             <label for="unit" class="form-label">Select Unit</label>
             <select name="unit" id="unit" class="form-select" onchange="filterPersonnel()">
@@ -45,22 +43,19 @@
             </select>
           </div>
 
-          <!-- Personnel Selection -->
           <div class="mb-3">
             <label class="form-label">Select Personnel (leave empty for all)</label>
             <div id="personnel-container" class="d-flex flex-column"></div>
             <small class="text-muted">You can select multiple personnel.</small>
           </div>
 
-          <!-- Month Filter -->
           <div class="mb-3">
             <label for="month" class="form-label">Select Month</label>
             <input type="month" name="month" id="month" class="form-control" required>
           </div>
         </div>
-
         <div class="modal-footer">
-          <button type="submit" class="btn btn-success">Generate</button>
+          <button type="submit" class="btn btn-success">Generate Preview</button>
         </div>
       </form>
     </div>

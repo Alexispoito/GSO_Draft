@@ -1,142 +1,150 @@
 {% extends "gso_office/gso_base_dashboard.html" %}
-
 {% block title %}IPMT Preview{% endblock %}
 
 {% block main_content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h3>IPMT Preview - {{ unit_filter|title }} | {{ month_filter }}</h3>
-    <div>
-        <button id="edit-btn" class="btn btn-warning">Edit All</button>
-        <button id="save-draft-btn" class="btn btn-success d-none">Save Draft</button>
-        <form method="get" action="{% url 'gso_reports:generate_ipmt' %}" class="d-inline">
-            <input type="hidden" name="unit" value="{{ unit_filter }}">
-            {% for p in personnel_names %}
-                <input type="hidden" name="personnel" value="{{ p }}">
-            {% endfor %}
-            <input type="hidden" name="month" value="{{ month_filter }}">
-            <button id="export-btn" type="submit" class="btn btn-primary">Export / Accept</button>
-        </form>
+<div class="header d-flex align-items-center justify-content-between mb-3">
+    <h1 class="page-title">IPMT Preview - {{ month_filter }}</h1>
+    <div class="btn-group">
+        <button id="edit-btn" class="btn btn-warning">Edit</button>
+        <button id="accept-btn" class="btn btn-success">Accept / Export</button>
+        <button id="save-btn" class="btn btn-primary d-none">Save</button>
+        <button id="cancel-btn" class="btn btn-secondary d-none">Cancel</button>
     </div>
 </div>
 
-<table class="table table-bordered" id="ipmt-table">
-    <thead>
-        <tr>
-            <th>Success Indicators<br><small>(Based on the IPCR Targets)</small></th>
-            <th>Actual Accomplishments</th>
-            <th>Comments / Remarks</th>
-            <th class="d-none">Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for row in reports %}
-        <tr data-indicator="{{ row.indicator }}">
-            <td>{{ row.indicator }}</td>
-            <td class="desc-cell">
-                <span class="desc-text">{{ row.description|default:"N/A" }}</span>
-                <textarea class="form-control desc-input d-none">{{ row.description|default:"" }}</textarea>
-            </td>
-            <td class="remarks-cell">
-                <span class="remarks-text">{{ row.remarks|default:"" }}</span>
-                <textarea class="form-control remarks-input d-none">{{ row.remarks|default:"" }}</textarea>
-            </td>
-            <td class="actions-cell d-none">
-                <button class="btn btn-danger btn-sm row-delete">Delete</button>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="table-responsive">
+    <table class="table table-bordered" id="ipmt-table">
+        <thead>
+            <tr>
+                <th>Success Indicators</th>
+                <th>Actual Accomplishments</th>
+                <th>Remarks</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in reports %}
+            <tr data-row-id="{{ forloop.counter0 }}" data-war-ids="{{ row.war_ids|join:',' }}">
+                <td>{{ row.indicator }}</td>
+                <td>
+                    <span class="desc-text">{{ row.description|default:"" }}</span>
+                    <input class="desc-input form-control d-none" type="text" value="{{ row.description|default:"" }}">
+                </td>
+                <td>
+                    <span class="remarks-text">{{ row.remarks|default:"" }}</span>
+                    <input class="remarks-input form-control d-none" type="text" value="{{ row.remarks|default:"" }}">
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const editBtn = document.getElementById('edit-btn');
-    const saveDraftBtn = document.getElementById('save-draft-btn');
-    const exportBtn = document.getElementById('export-btn');
-    const table = document.getElementById('ipmt-table');
-    let editing = false;
+document.addEventListener("DOMContentLoaded", function() {
+    const editBtn = document.getElementById("edit-btn");
+    const acceptBtn = document.getElementById("accept-btn");
+    const saveBtn = document.getElementById("save-btn");
+    const cancelBtn = document.getElementById("cancel-btn");
 
-    // Toggle Edit Mode
-    editBtn.addEventListener('click', () => {
-        editing = !editing;
+    const table = document.getElementById("ipmt-table");
+    const rows = table.querySelectorAll("tbody tr");
 
-        table.querySelectorAll('tr').forEach(row => {
-            // Show/hide textareas and actions
-            row.querySelectorAll('.desc-text, .remarks-text').forEach(el => el.classList.toggle('d-none'));
-            row.querySelectorAll('.desc-input, .remarks-input').forEach(el => el.classList.toggle('d-none'));
-            row.querySelector('.actions-cell').classList.toggle('d-none');
+    let editMode = false;
+    let originalData = [];
+
+    function enterEditMode() {
+        editMode = true;
+        originalData = [];
+
+        rows.forEach(row => {
+            const descInput = row.querySelector(".desc-input");
+            const remarksInput = row.querySelector(".remarks-input");
+            const descText = row.querySelector(".desc-text");
+            const remarksText = row.querySelector(".remarks-text");
+
+            originalData.push({desc: descInput.value, remarks: remarksInput.value});
+
+            descText.classList.add("d-none");
+            remarksText.classList.add("d-none");
+            descInput.classList.remove("d-none");
+            remarksInput.classList.remove("d-none");
         });
 
-        // Show/hide buttons
-        saveDraftBtn.classList.toggle('d-none', !editing);
-        exportBtn.disabled = editing;
+        editBtn.classList.add("d-none");
+        acceptBtn.classList.add("d-none");
+        saveBtn.classList.remove("d-none");
+        cancelBtn.classList.remove("d-none");
+    }
 
-        editBtn.textContent = editing ? "Cancel Edit" : "Edit All";
+    function exitEditMode() {
+        editMode = false;
+        rows.forEach((row, index) => {
+            const descInput = row.querySelector(".desc-input");
+            const remarksInput = row.querySelector(".remarks-input");
+            const descText = row.querySelector(".desc-text");
+            const remarksText = row.querySelector(".remarks-text");
+
+            descText.textContent = descInput.value;
+            remarksText.textContent = remarksInput.value;
+
+            descText.classList.remove("d-none");
+            remarksText.classList.remove("d-none");
+            descInput.classList.add("d-none");
+            remarksInput.classList.add("d-none");
+        });
+
+        editBtn.classList.remove("d-none");
+        acceptBtn.classList.remove("d-none");
+        saveBtn.classList.add("d-none");
+        cancelBtn.classList.add("d-none");
+    }
+
+    editBtn.addEventListener("click", enterEditMode);
+    cancelBtn.addEventListener("click", function() {
+        rows.forEach((row, index) => {
+            const descInput = row.querySelector(".desc-input");
+            const remarksInput = row.querySelector(".remarks-input");
+            descInput.value = originalData[index].desc;
+            remarksInput.value = originalData[index].remarks;
+        });
+        exitEditMode();
     });
 
-    // Row-level Delete
-    table.addEventListener('click', (e) => {
-        if (e.target.classList.contains('row-delete')) {
-            const row = e.target.closest('tr');
-            row.remove();
-        }
-    });
-
-    // Save Draft
-    saveDraftBtn.addEventListener('click', async () => {
-        const rows = table.querySelectorAll('tbody tr');
+    saveBtn.addEventListener("click", async function() {
         const payload = [];
         rows.forEach(row => {
+            const descInput = row.querySelector(".desc-input");
+            const remarksInput = row.querySelector(".remarks-input");
             payload.push({
-                indicator: row.dataset.indicator,
-                description: row.querySelector('.desc-input').value,
-                remarks: row.querySelector('.remarks-input').value
+                indicator: row.children[0].textContent.trim(),
+                description: descInput.value.trim(),
+                remarks: remarksInput.value.trim(),
+                war_ids: row.dataset.warIds.split(",").filter(Boolean).map(Number)
             });
         });
 
-        try {
-            const response = await fetch("{% url 'gso_reports:save_ipmt_draft' %}", {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token }}'
-                },
-                body: JSON.stringify({
-                    month: "{{ month_filter }}",
-                    unit: "{{ unit_filter }}",
-                    personnel: {{ personnel_names|safe }},
-                    rows: payload
-                })
-            });
-            if (response.ok) {
-                alert('Draft saved successfully!');
-                editBtn.click(); // exit edit mode
-            } else {
-                alert('Error saving draft');
-            }
-        } catch (err) {
-            console.error(err);
-            alert('Error saving draft');
+        const response = await fetch("{% url 'gso_reports:save_ipmt' %}", {
+            method: "POST",
+            headers: {"Content-Type": "application/json", "X-CSRFToken": "{{ csrf_token }}"},
+            body: JSON.stringify({
+                month: "{{ month_filter }}",
+                unit: "{{ unit_filter }}",
+                personnel: {{ personnel_names|safe }},
+                rows: payload
+            })
+        });
+
+        if (response.ok) {
+            alert("IPMT saved successfully!");
+            exitEditMode();
+        } else {
+            alert("Error saving IPMT.");
         }
     });
 
-    // Auto-compile remarks for N/A description
-    table.querySelectorAll('tbody tr').forEach(row => {
-        const desc = row.querySelector('.desc-text').textContent.trim();
-        const remarks = row.querySelector('.remarks-text').textContent.trim();
-        if (desc === "N/A" && remarks === "") {
-            // Collect from other rows with same indicator
-            const indicator = row.dataset.indicator;
-            let compiled = [];
-            table.querySelectorAll(`tbody tr[data-indicator="${indicator}"]`).forEach(r => {
-                const d = r.querySelector('.desc-text').textContent.trim();
-                if (d !== "N/A") compiled.push(d);
-            });
-            if (compiled.length) {
-                row.querySelector('.remarks-text').textContent = compiled.join("; ");
-                row.querySelector('.remarks-input').textContent = compiled.join("; ");
-            }
-        }
+    acceptBtn.addEventListener("click", function() {
+        const urlParams = new URLSearchParams({month: "{{ month_filter }}", unit: "{{ unit_filter }}"});
+        window.location.href = "{% url 'gso_reports:generate_ipmt' %}?" + urlParams.toString();
     });
 });
 </script>

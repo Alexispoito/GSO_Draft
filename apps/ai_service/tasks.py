@@ -1,47 +1,68 @@
 # apps/ai_service/tasks.py
-from celery import shared_task
-from apps.gso_reports.models import WorkAccomplishmentReport
+from apps.gso_reports.models import WorkAccomplishmentReport, SuccessIndicator
 from .utils import generate_war_description, generate_ipmt_summary
 
-
-@shared_task
-def generate_war_description_task(war_id):
+# -------------------------------
+# Generate WAR AI Description
+# -------------------------------
+def generate_war_description(war_id: int):
     """
-    Celery task: Generate and save an AI description for a Work Accomplishment Report (WAR).
+    Generate AI description for a specific Work Accomplishment Report (WAR)
+    using the OpenRouter DeepSeek model.
+    Updates the WAR.description field directly.
     """
     try:
         war = WorkAccomplishmentReport.objects.get(id=war_id)
-        personnel_names = [p.get_full_name() or p.username for p in war.assigned_personnel.all()]
+
+        activity_name = war.activity_name or "Miscellaneous"
+        unit_name = war.unit.name if war.unit else None
+        personnel_names = [p.get_full_name() for p in war.assigned_personnel.all()] if war.assigned_personnel.exists() else None
 
         description = generate_war_description(
-            activity_name=war.activity_name,
-            unit=war.unit.name if war.unit else "",
-            personnel_names=personnel_names,
+            activity_name=activity_name,
+            unit=unit_name,
+            personnel_names=personnel_names
         )
 
         war.description = description
-        war.save()
-        return f"Description generated for WAR {war.id}"
-
+        war.save(update_fields=["description"])
+        return description
     except WorkAccomplishmentReport.DoesNotExist:
-        return f"WAR {war_id} not found"
+        return None
 
-
-@shared_task
-def generate_ipmt_summary_task(ipmt_id):
+# -------------------------------
+# Generate IPMT AI Summary
+# -------------------------------
+def generate_ipmt_summary(unit_name: str, month_filter: str):
+    from apps.gso_reports.utils import collect_ipmt_reports
     """
-    Celery task: Generate and save an AI-based IPMT summary for all linked WARs.
+    Generate AI summaries for IPMT rows for a given unit and month.
+    Uses all WAR descriptions related to the unit and month.
+    Returns a list of updated rows with 'remarks'.
     """
-    from apps.gso_reports.models import IPMTDraft  # avoid circular import
-
     try:
-        ipmt = IPMTDraft.objects.get(id=ipmt_id)
-        war_descriptions = [war.description or war.activity_name for war in ipmt.reports.all()]
+        year, month_num = map(int, month_filter.split("-"))
+    except ValueError:
+        return []
 
-        summary = generate_ipmt_summary(war_descriptions)
-        ipmt.accomplishment = summary
-        ipmt.save()
-        return f"IPMT summary generated for draft {ipmt.id}"
+    # Collect IPMT rows
+    ipmt_rows = collect_ipmt_reports(year, month_num, unit_name)
 
-    except IPMTDraft.DoesNotExist:
-        return f"IPMT draft {ipmt_id} not found"
+    updated_rows = []
+
+    for row in ipmt_rows:
+        war_id = row.get("war_id")
+        description = row.get("description", "")
+        indicator_code = row.get("indicator")
+
+        # Generate AI remarks only if there is a description
+        if description:
+            remarks = generate_ipmt_summary(
+                success_indicator=indicator_code,
+                war_descriptions=[description]
+            )
+            row["remarks"] = remarks
+
+        updated_rows.append(row)
+
+    return updated_rows

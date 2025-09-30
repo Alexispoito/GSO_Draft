@@ -1,11 +1,13 @@
 # apps/gso_reports/utils.py
 from django.utils import timezone
 from datetime import datetime
+from apps.gso_accounts.models import Unit, User
 from apps.gso_requests.models import ServiceRequest
-from .models import WorkAccomplishmentReport, ActivityName, SuccessIndicator, IPMTDraft
+from .models import WorkAccomplishmentReport, ActivityName, SuccessIndicator, IPMT
 import io
 import calendar
 import pandas as pd
+
 
 
 # -------------------------------
@@ -76,72 +78,89 @@ def map_activity_name_from_reports(service_request):
 # Collect IPMT Reports (Indicator → Accomplishment → Remarks)
 # -------------------------------
 def collect_ipmt_reports(year: int, month_num: int, unit_name: str = None, personnel_names: list = None):
+    from apps.ai_service.tasks import generate_ipmt_summary
     """
-    Collect IPMT preview rows:
-    - All active SuccessIndicators for the unit
-    - Prefill Actual Accomplishments from WAR AI description if available
-    - Prefill Remarks from IPMTDraft if exists
-    Returns a list of dicts:
-    {
-        "indicator": str,
-        "description": str,
-        "remarks": str,
-        "war_id": int or None
-    }
-    """
-    reports = []
+    Collect IPMT preview rows using activity_name → SuccessIndicator mapping per personnel.
 
-    # 1. Get the unit
-    from apps.gso_accounts.models import Unit
+    Returns a list of dicts per personnel:
+    [
+        {
+            "personnel": str,
+            "rows": [
+                {
+                    "indicator": str,
+                    "description": str,  # compiled from WAR(s), AI-generated if multiple
+                    "remarks": str,      # auto-filled from description
+                    "war_ids": list      # list of contributing WAR IDs
+                }
+            ]
+        }
+    ]
+    """
+
+    result = []
+
+    # 1. Get unit
     try:
         unit = Unit.objects.get(name__iexact=unit_name)
     except Unit.DoesNotExist:
         return []
 
-    # 2. Get all active SuccessIndicators for this unit
-    indicators = SuccessIndicator.objects.filter(unit=unit, is_active=True)
+    # 2. Filter personnel
+    if personnel_names and "all" not in [p.lower() for p in personnel_names]:
+        users = User.objects.filter(
+            first_name__in=[p.split()[0].capitalize() for p in personnel_names],
+            unit=unit
+        )
+    else:
+        users = User.objects.filter(unit=unit, role="personnel")
 
-    # 3. Filter WARs for this unit and month
+    # 3. Filter WARs for this unit/month
     wars = WorkAccomplishmentReport.objects.filter(
         unit=unit,
         date_started__year=year,
-        date_started__month=month_num,
-    ).prefetch_related("assigned_personnel")
+        date_started__month=month_num
+    ).prefetch_related("assigned_personnel").select_related("activity_name")
 
-    # 4. Optionally filter by personnel
-    if personnel_names and "all" not in [p.lower() for p in personnel_names]:
-        wars = wars.filter(
-            assigned_personnel__first_name__in=[p.split()[0] for p in personnel_names]
-        )
+    # 4. Get active SuccessIndicators for the unit
+    indicators = SuccessIndicator.objects.filter(unit=unit, is_active=True)
 
-    # 5. Build report rows
-    for indicator in indicators:
-        # Find a WAR that matches this indicator (simple keyword match)
-        matched_war = None
-        for war in wars:
-            if indicator.description.lower() in (war.description or "").lower():
-                matched_war = war
-                break
+    for user in users:
+        personnel_rows = []
 
-        # Prefill description from WAR AI description if exists
-        description = matched_war.description if matched_war else ""
+        for indicator in indicators:
+            # Filter WARs assigned to this user and matching the indicator
+            matched_wars = [
+                w for w in wars
+                if user in w.assigned_personnel.all()
+                and w.activity_name and w.activity_name.name == indicator.name
+            ]
 
-        # Prefill remarks from IPMTDraft if exists
-        ipmt_draft = IPMTDraft.objects.filter(
-            indicator=indicator,
-            unit=unit,
-            month=f"{year}-{month_num:02d}"
-        ).first()
-        remarks = ipmt_draft.remarks if ipmt_draft else ""
+            if not matched_wars:
+                description = ""
+                war_ids = []
+            elif len(matched_wars) == 1:
+                description = matched_wars[0].description
+                war_ids = [matched_wars[0].id]
+            else:
+                war_descriptions = [w.description for w in matched_wars if w.description]
+                description = generate_ipmt_summary(indicator.name, war_descriptions)
+                war_ids = [w.id for w in matched_wars]
 
-        reports.append({
-            "indicator": indicator.code,
-            "description": description,
-            "remarks": remarks,
-            "war_id": matched_war.id if matched_war else None,
+            personnel_rows.append({
+                "indicator": indicator.code,
+                "description": description,
+                "remarks": description,  # auto-fill remarks
+                "war_ids": war_ids
+            })
+
+        result.append({
+            "personnel": user.get_full_name() or user.username,
+            "rows": personnel_rows
         })
 
-    return reports
+    return result
+
 # -------------------------------
 # Generate IPMT Excel
 # -------------------------------

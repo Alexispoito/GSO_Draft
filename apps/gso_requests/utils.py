@@ -63,7 +63,7 @@ def create_war_from_request(request):
             "date_started": request.created_at.date(),
             "date_completed": timezone.now().date(),
             "status": "Completed",
-            "project_name": activity.name if activity else "Miscellaneous",
+            "activity_name": activity.name if activity else "Miscellaneous",
             "unit": request.unit,
         }
     )

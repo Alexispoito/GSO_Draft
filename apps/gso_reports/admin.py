@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import WorkAccomplishmentReport, SuccessIndicator, IPMTDraft, ActivityName
+from .models import WorkAccomplishmentReport, SuccessIndicator, ActivityName
 
 
 @admin.register(ActivityName)
@@ -11,20 +11,13 @@ class ActivityNameAdmin(admin.ModelAdmin):
 
 @admin.register(SuccessIndicator)
 class SuccessIndicatorAdmin(admin.ModelAdmin):
-    list_display = ("code", "unit", "description", "is_active")
+    list_display = ("code", "unit", "description", "activity_name", "is_active")
     list_filter = ("unit", "is_active")
-    search_fields = ("code", "description")
-
-
-@admin.register(IPMTDraft)
-class IPMTDraftAdmin(admin.ModelAdmin):
-    list_display = ("personnel", "unit", "month", "indicator", "status")
-    list_filter = ("unit", "month", "status")
-    search_fields = ("personnel__username", "indicator__code")
+    search_fields = ("code", "description", "activity_name__name")
 
 
 @admin.register(WorkAccomplishmentReport)
 class WorkAccomplishmentReportAdmin(admin.ModelAdmin):
-    list_display = ("project_name", "unit", "date_started", "status", "total_cost")
+    list_display = ("activity_name", "unit", "date_started", "status", "total_cost")
     list_filter = ("unit", "status", "date_started")
-    search_fields = ("project_name", "description")
+    search_fields = ("activity_name", "description")
