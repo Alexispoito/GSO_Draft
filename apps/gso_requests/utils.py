@@ -68,29 +68,26 @@ def create_war_from_request(request):
         }
     )
 
-    # ✅ Always ensure the WAR is linked to the ServiceRequest
+    # ✅ Ensure WAR is linked to the ServiceRequest
     if war.request_id != request.id:
         war.request = request
         war.save(update_fields=["request"])
 
+    # ✅ Copy assigned personnel to WAR
     if request.assigned_personnel.exists():
         war.assigned_personnel.set(request.assigned_personnel.all())
 
     # ---------------------------
-    # Generate AI description asynchronously in a thread
+    # Generate AI description asynchronously
     # ---------------------------
-    def generate_description_thread(war_instance, description_text, unit_name, personnel_list):
-        war_instance.description = generate_war_description(
-            activity_name=activity.name if activity else description_text,
-            unit=unit_name,
-            personnel_names=personnel_list
-        )
+    def generate_description_thread(war_instance, req):
+        war_instance.description = generate_war_description(req)
         war_instance.save(update_fields=["description"])
 
-    personnel_names = [p.get_full_name() or p.username for p in request.assigned_personnel.all()]
+    # Run AI generation in background thread
     threading.Thread(
         target=generate_description_thread,
-        args=(war, request.description, request.unit.name if request.unit else "", personnel_names),
+        args=(war, request),
         daemon=True
     ).start()
 
